@@ -9,5 +9,14 @@ Description: More about what it does (maybe more than one line)
 License: What license is it under?
 Encoding: UTF-8
 LazyData: true
-URL: https://github.com/d-morrison/causalx
+URL: https://github.com/d-morrison/causalx,
+    https://d-morrison.github.io/causalx/
 BugReports: https://github.com/d-morrison/causalx/issues
+Suggests: 
+    knitr,
+    parameters,
+    rmarkdown
+VignetteBuilder: knitr
+Imports: 
+    broom.mixed,
+    lme4

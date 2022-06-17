@@ -1,0 +1,80 @@
+---
+title: "fixed-vs-random"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{fixed-vs-random}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(causalx)
+library(lme4)
+library(parameters)
+library(broom.mixed)
+```
+
+
+```{r}
+
+lm1 = lm(Sepal.Length ~ Species, data = iris[-c(1:10)])
+lm2 = lmer(Sepal.Length ~ (1|Species), data = iris)
+
+
+lm2 |> broom.mixed::tidy(effects="ran_vals")
+```
+
+Here's a causal model simulation:
+
+```{r}
+m = 500
+n = 5
+person_data = tibble(
+  id = 1:m,
+  c = rnorm(n = m),
+  x0 = rnorm(n = m) + c
+)
+
+obs_data = 
+  person_data |> 
+  group_by(id, x0, c) |> 
+  summarize(
+    .groups = "drop",
+    obs = 1:n
+  ) |> 
+  mutate(
+    x = x0 + rnorm(m*n),
+    y = x + c + rnorm(m*n),
+    
+  ) |> 
+  group_by(id, x0, c) |> 
+  mutate(xbar = mean(x)) |> 
+  ungroup()
+
+lm_true = lm(y ~ x + c, data = obs_data)
+lm1 = lm(y ~ x, data = obs_data)
+
+lm2 = lmer(y ~ x + (1|id), data = obs_data)
+lm3 = lmer(y ~ x + xbar + (1|id), data = obs_data)
+lm4 = lm(y ~ x + factor(id), data = obs_data)
+coef(lm4) |> head()
+fixef(lm2)
+coef(lm1)
+
+sum1 = summary(lm1)
+sum2 = summary(lm2)
+# sum3 = summary(lm3)
+
+```
+
+Even though `xbar` and `id` are multicollinear, the model massively benefits from being helped to understand the non-causal relationship between `id` and the outcome, which is approximately blocked by `xbar`. This is an example of the usefulness of group-mean centering.
+
+
+It's a lot easier to get the right answer once you 
