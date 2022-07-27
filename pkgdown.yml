@@ -1,0 +1,10 @@
+pandoc: 2.7.3
+pkgdown: 2.0.6
+pkgdown_sha: ~
+articles:
+  fixed-vs-random: fixed-vs-random.html
+last_built: 2022-07-27T20:31Z
+urls:
+  reference: https://d-morrison.github.io/causalx/reference
+  article: https://d-morrison.github.io/causalx/articles
+
