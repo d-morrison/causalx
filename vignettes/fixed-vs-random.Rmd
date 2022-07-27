@@ -19,14 +19,17 @@ library(causalx)
 library(lme4)
 library(parameters)
 library(broom.mixed)
+library(dplyr)
 ```
 
 
 ```{r}
+iris2 = iris[-c(1:10),] |> as_tibble() # create an imbalance in obs counts by species
+lm1 = lm(Sepal.Length ~ Species - 1, data = iris2)
+lm2 = lmer(Sepal.Length ~ (1|Species), data = iris2)
 
-lm1 = lm(Sepal.Length ~ Species, data = iris[-c(1:10)])
-lm2 = lmer(Sepal.Length ~ (1|Species), data = iris)
-
+coef(lm1)
+coef(lm2)
 
 lm2 |> broom.mixed::tidy(effects="ran_vals")
 ```
