@@ -1,0 +1,372 @@
+---
+title: "simple-stratification"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{simple-stratification}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+NOTE: This is a RECONSTRUCTION of an Rmd that I can't find, that produced the original "simple-stratification.docx" found in my ucla google drive under "Intro to Causal Inference".
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(causalx)
+```
+A set of assumptions for causal inference
+Each observation’s potential outcomes Yi1 and Yi0 are independent of other participants’ observed exposures (“non-interference”). Similar to typical i.i.d. assumption; fails e.g. for vaccination effects, due to herd immunity. Needed in order to clearly define potential outcomes.
+Each observed outcome is equal to the potential outcome corresponding to the observed outcome: if X=x, then Y=Yx (“consistency”, “no multiple versions of treatment”, “well-defined interventions”). Can fail if treatment is imprecisely defined; e.g., “effect of heart transplant”.
+The potential outcomes are each statistically independent of the observed treatment, given some vector of observed covariates Z: x:YxX|Z (“ignorability”, “conditional exchangeability”, “no uncontrolled confounding”). This assumption holds automatically (for any Z) if we randomize X, which is why randomized controlled trials are considered reliable sources of evidence.
+The probabilities of each treatment option (value of X) must be nonzero for every value of Z with nonzero density: PX=x|Z=zx,∀z:pZ=z>0 (“positivity”). This assumption ensures that we observe at least some of each potential outcome for every possible value of Z, so that we can use those potential outcomes to impute the missing counterfactual outcomes.
+The first two assumptions are sometimes jointly referred to as the “Stable Unit Treatment Value Assumption” (SUTVA).
+These four assumptions are sufficient for causal inference, but they aren’t always necessary! However, they are very commonly used, because they are very helpful. In particular:
+Assumption 2 entails that EYx|X=x,Z=z=EY|X=x,Z=z; thus it allows us to infer the conditional expectation of the potential outcome Yx from the conditional expectation of the observed outcome Y, for those participants who received x.
+Assumption 3 entails that EYx|X=x,Z=z=EYx|Z=z; thus it allows us remove X=x from the condition on the right side of the previous expression.
+Thus, Assumptions 2 and 3 combined give us the following key result:
+EYx|Z=z=EY|X=x,Z=z
+This result says that if our assumptions are correct, we can accurately estimate the conditional distributions of the potential outcomes from the conditional distributions of the observed outcomes. In particular, we can impute the missing counterfactual outcomes using observed outcomes from the same Z stratum.
+Let’s see what we can do with that result.
+Example scenario
+Suppose we have a data set of observations for three binary variables, X, Y, and Z.
+Suppose we are interested in the effects of X on Y, i.e., we are interested in some causal estimands which are defined as functions of the potential outcomes Yx.
+If we assume that our observed covariate Z satisfies Assumption 3 (ignorability/conditional exchangeability) and that Assumptions 1 and 3 also hold, then we have:
+pYx=1|Z=z=pY=1|X=x,Z=z
+And further, by the Law of Total Probability we have:
+pYx=1=z∈{0,1}pYx=1|Z=zPZ=z
+=z∈{0,1}pY=1|X=x,Z=zPZ=z
+We can consistently estimate pY=1|X=x,Z=z and PZ=z from the observed joint distribution pX,Y,Z, so under our assumptions, we can also consistently estimate pYx=1|Z=z and pYx=1.
+We can also estimate pZ=z|X=1, which enables us to estimate the Average Treatment effect among the Treated (ATT), EY1-Y0|X=1:
+EYx|X=1=z∈{0,1}EYx|Z=z,X=1PZ=z|X=1
+=z∈{0,1}EYx|Z=zPZ=z|X=1
+=z∈{0,1}E(Y|X=x,Z=z]⋅PZ=z|X=1
+Next, let’s see how this works in practice.
+Simulation example
+We will simulate data from a distribution pX,Y,Z, specified such that py|x,z=pYx=y|Z=z. Specifically, we will construct the data-generating model such that:
+py|x,z=pYx=1|Z=z=0.1+0.1x+0.2z+0.1xz
+This model entails the following table of conditional potential risks:
+```{r}
+
+library(dplyr) # convenient data-manipulation functions
+library(pander) # table formatting functions
+library(purrr)
+panderOptions("table.split.table", Inf) # make sure wide tables don't get split up
+
+PO_model = tribble(
+  ~x, ~z,
+  0, 0,
+  0, 1,
+  1, 0,
+  1, 1) |> 
+  mutate(`p(Y(x)=1|Z=z)` = 0.1 + 0.1*x + 0.2*z + .1*x*z)
+
+pander(PO_model)
+```
+We will simulate Z as a Bernoulli random variable with pZ=1=0.5, and we’ll simulate X as Bernoulli RV with pX=1|Z=z=.3+.4z. We don’t need to assume a causal relationship between Z and X; only an association. We also don’t need to assume that Z is a cause of Y, either, but due to how we defined pYx=1|Z=z, we have assumed that there is a causal connection between Z and Y. Let’s talk more about the exact nature of that connection later.
+Now let’s simulate the data; first we’ll generate Z:
+```{r}
+
+set.seed(1) # control RNG, for reproducibility
+n = 10^6 # number of observations in simulated data set; made large to see asymptotic results
+data1 = tibble(Z = rbernoulli(n = n, p = 0.5))
+```
+
+Next, we’ll generate the potential outcomes Y0 and Y1. We’ll do this before simulating X, to make it clear that these potential outcomes don’t depend on X, given Z; thus, our data-generating model satisfies ignorability/conditional exchangeability.
+
+data1 = 
+  data1 |> 
+  mutate(
+  `Y(0)` = rbernoulli(n = n, p = .1 + .2*Z),
+  `Y(1)` = rbernoulli(n = n, p = .1 + .1*1 + .2*Z + .1*1*Z))
+Next, we’ll simulate X, and use X to determine which potential outcome becomes the observed outcome Y:
+
+data1 = data1 |> 
+  mutate(
+  X = rbernoulli(n = n, p = .3 + .4*Z),
+  Y = if_else(X == 1, `Y(1)`, `Y(0)`)) |> 
+  mutate(across(where(is.logical), as.numeric)) # convert from TRUE/FALSE to 0/1 representations, for convenience
+Since we simulated both potential outcomes for every observation, let’s peek behind the curtain and confirm that our simulation results match our intended potential outcomes model:
+
+data1 |> 
+  group_by(z = Z) |> 
+  summarize(
+    `E[Y(0)|Z=z]` = mean(`Y(0)`),
+    `E[Y(1)|Z=z]` = mean(`Y(1)`)) |> 
+  pander()
+z
+E[Y(0)|Z=z]
+E[Y(1)|Z=z]
+0
+0.09941
+0.2003
+1
+0.2996
+0.5001
+
+We can see that these results closely match the previous table. Furthermore, we can use the potential outcomes to directly approximate the marginal average potential outcomes, EY0 and EY1:
+
+data1 |> 
+  summarize(
+    `E[Y(0)]` = mean(`Y(0)`),
+    `E[Y(1)]` = mean(`Y(1)`)) |>  
+  mutate(
+    `E[Y(1) - Y(0)]` = `E[Y(1)]` - `E[Y(0)]` 
+  ) |> 
+  pander()
+E[Y(0)]
+E[Y(1)]
+E[Y(1) - Y(0)]
+0.1996
+0.3503
+0.1508
+
+With a little probability theory, we can work out that the true marginal average potential outcomes are indeed EY0=0.2 and EY1=0.35, and thus EY1-Y0=0.15.
+In practice, we don’t observe the complete Y0 and Y1 vectors; we only observe Y (and X and Z). So let’s implement the estimation strategies we sketched previously.
+Let’s start with EY0 and EY1. How do we estimate them?
+What not to do:
+
+data1 |> 
+  summarize(
+    `E[Y|X=0]` = mean(Y[X==0]),
+    `E[Y|X=1]` = mean(Y[X==1])) |> 
+  mutate(
+    `E[Y|X=1] - E[Y|X=0]` = `E[Y|X=1]` - `E[Y|X=0]`
+    ) |>  
+  pander()
+E[Y|X=0]
+E[Y|X=1]
+E[Y|X=1] - E[Y|X=0]
+0.1605
+0.4102
+0.2497
+
+Comparing this table to the previous one, we can see that EY|X=xEYx and EY|X=1-EY|X=0EY1-Y0; he apparent risk difference, EY|X=1-EY|X=0, is about 10 percentage points larger than the true average treatment effect, EY1-Y0.
+Regression analysis
+Since we have assumed that pYx=1|Z=z=pY=1|X=x,Z=z, we might start by estimating pY=1|X=x,Z=z using a regression model. Specifically, we can fit a generalized linear model pY=1|X=x,Z=z=0+Xx+Zz+XZxz, like so:
+
+glm1 = glm(
+  data = data1, 
+  formula = Y ~ X * Z, 
+  family = binomial(link = "identity"))
+
+glm1 |> summary() |> coef() |> pander()
+ 
+Estimate
+Std. Error
+z value
+Pr(>|z|)
+(Intercept)
+0.09985
+0.000507
+197
+0
+X
+0.1002
+0.001151
+87.09
+0
+Z
+0.2021
+0.001289
+156.8
+0
+X:Z
+0.09799
+0.001856
+52.81
+0
+
+This model is saturated, so a logistic link would produce a numerically equivalent fit compared to the identity link I’m using here; but the identity link is more convenient to work with because the coefficients correspond to risks and risk differences rather than log-odds and log-odds ratios.
+If we compare the estimated coefficients to the potential outcomes model coefficients that used to generate the data, pYx=1|Z=z=0.1+0.1x+0.2z+0.1xz, we can see that we have approximately recovered the coefficients of that potential outcomes model.
+Under our assumptions, we can extract estimates of the conditional potential risks from this regression model; i.e.,
+EYx|Z=z=0+Xx+Zz+XZxz
+
+beta = coef(glm1)
+
+PO_estimates = 
+  PO_model |> 
+  mutate(
+    `p(Y=1|X=x,Z=z)` = beta[1] + beta[2]*x + beta[3]*z + beta[4]*x*z
+    # more generally: `p(Y=1|X=x,Z=z)` = predict(glm1, newdata = tibble(X=x,Z=z), type = "response")
+    ) 
+
+pander(PO_estimates)
+x
+z
+p(Y(x)=1|Z=z)
+p(Y=1|X=x,Z=z)
+0
+0
+0.1
+0.09985
+0
+1
+0.3
+0.302
+1
+0
+0.2
+0.2001
+1
+1
+0.5
+0.5002
+
+By comparing the columns pYx=1|Z=z and pY=1|X=x,Z=z, we can see that we have succeeded in recovering the underlying causal model.
+Now, we can consistently estimate the marginal potential risk pYx=1 by marginalizing the fitted model over the estimated distribution of Z:
+pYx=1=z0,1pYx=1|Z=zpZ=z=z0,1pY=1|X=x,Z=zpZ=z
+This type of estimate is called a “g-computation formula” (“g-formula” for short), and it was popularized by Jamie Robins, although it is actually the same thing as standardization, which has been around for a long time.
+Average Treatment effect on the Treated (ATT)
+Regression modeling also makes it relatively simple to compute the ATT. We first need to fit an additional model, pZ=z|X=1:
+
+ATT_model = glm(
+  formula = Z ~ X,
+  data = data1,
+  family = binomial(link = "identity"))
+
+ATT_model |> summary() |> coef() |> pander()
+ 
+Estimate
+Std. Error
+z value
+Pr(>|z|)
+(Intercept)
+0.3002
+0.0006484
+463
+0
+X
+0.4001
+0.0009165
+436.5
+0
+
+
+`p(Z=1|X=1)` = predict(ATT_model, newdata = tibble(X=1), type = 'response')
+(Alternatively, we could estimate pZ=z and pX=1|Z=z and solve for pZ=z|X=1 using Bayes’ Theorem).
+Then the ATT is:
+PY1-Y0|X=1=z0,1pY=1|X=1,Z=z-pY=1|X=0,Z=zpZ=z|X=1
+We can compute the sample-analogue of this quantity like so:
+
+PO_estimates |> 
+  group_by(z) |> 
+  summarize(
+    `E[Y(1)-Y(0)|Z=z]` = `p(Y=1|X=x,Z=z)`[x==1] - `p(Y=1|X=x,Z=z)`[x == 0]
+  ) |> 
+  mutate(
+   `p(Z=z|X=1)` = if_else(z == 1, `p(Z=1|X=1)`, 1-`p(Z=1|X=1)`)
+  ) |> 
+  summarize(
+     `E[Y(1)-Y(0)|X=1]` =  sum(`E[Y(1)-Y(0)|Z=z]` * `p(Z=z|X=1)`) 
+  ) |> 
+  pander()
+E[Y(1)-Y(0)|X=1]
+0.1688
+
+For our particular data-generating model, we know that:
+PY1-Y0|X=1=z0,1pY=1|X=1,Z=z-pY=1|X=0,Z=zpZ=z|X=1
+=z0,10+X+Zz+XZz-0+ZzpZ=z|X=1
+=z0,1X+XZzpZ=z|X=1
+=X+XZpZ=1|X=1
+=X+XZpZ=1|X=1
+=0.1+0.1pZ=1|X=1
+We also have:
+pZ=1|X=1=pX=1|Z=1pZ=1pX=1|Z=1pZ=1+pX=1|Z=0pZ=0
+=.7.5.7.5+.3.5
+=0.7
+So PY1-Y0|X=1=0.1+0.1*0.7=.17, which mateches our empirical estimate.
+Stratification
+Alternatively, if Z is discrete-valued or can be discretized without invalidating ignorability (assumption 3), and if we have enough data that there are a substantial number in each stratum of Z, then we could stratify the data set by Z, and compute EY|X=x,Z=z=EYx|Z=z directly for each x,z pair:
+
+strata =
+  data1 |> 
+  group_by(z = Z) |> 
+  summarize(
+    .groups = "drop",
+    `E[Y|X=1,Z=z]` = mean(Y[X==1]),
+    `E[Y|X=0,Z=z]` = mean(Y[X==0]),
+    `E[Y(1) - Y(0)|Z=z]` = `E[Y|X=1,Z=z]` - `E[Y|X=0,Z=z]`,
+    `p(Z=z)` = n()/nrow(data1))
+
+strata |> pander()
+z
+E[Y|X=1,Z=z]
+E[Y|X=0,Z=z]
+E[Y(1) - Y(0)|Z=z]
+p(Z=z)
+0
+0.2001
+0.09985
+0.1002
+0.4996
+1
+0.5002
+0.302
+0.1982
+0.5004
+
+Here we can see that the stratified means E[Y|X=x,Z=z] are approximately equal to the conditional average potential outcomes, EYx|Z=z.
+We can compute a weighted average of the stratified estimates E[Y(1) - Y(0)|Z=z], with weights equal to p(Z=z), to estimate the marginal average treatment effect (ATE), E[Y(1) - Y(0)]:
+
+`E[Y(1) - Y(0)]` = 
+  strata |> 
+  summarize(`E[Y(1) - Y(0)]` = sum(`E[Y(1) - Y(0)|Z=z]` * `p(Z=z)`)) |> 
+  pander()
+In this example, regression and stratification are actually mathematically equivalent. However, if Z were continuous, then stratification would require choosing a discretization of Z that we think is sufficiently fine-grained, whereas we could perform the regression analysis using the observed continuous Z and replacing the summation step
+pYx=1=z0,1pYx=1|Z=zpZ=z=z0,1pY=1|X=x,Z=zpZ=z
+with an integration step
+pYx=1=z∈RpYx=1|Z=zpZ=zdz=z∈RpY=1|X=x,Z=zpZ=zdz
+We also don’t need to use a saturated regression model; for example, if we are confident that the interaction term is unnecessary (XZ=0), we could state that assumption and remove it from the model. Then the regression result would not match the stratification result; the regression approach would lose flexibility and gain precision.
+Propensity scores
+Sometimes, it may be easier to fit a model for pX=x|Z=z than a model for pY=y|X=x,Z=z, for example if the functional form of pX=x|Z=z is simpler or better-understood from prior research. In such cases, we can use pX=x|Z=z, which we call the “propensity score” (i.e., propensity of treatment score), to estimate causal effects. There are several ways to use propensity scores, including regression adjustment, matching, and weighting. Here I’ll demonstrate stratification adjustment: we can estimate the propensity score pX=1|Z=z and stratify on a discretization of this score, instead of stratifying on Z. In this case, since Z is binary, there will only be two values of the propensity score, so no further discretization is needed:
+
+PS_model = glm(
+  data = data1,
+  family = binomial, # model is saturated, so link function doesn't matter
+  X ~ Z)
+
+data1 =
+  data1 |> 
+  mutate(S = predict(PS_model, newdata = tibble(Z), type = "response"))
+
+PS_strata =
+  data1 |> 
+  group_by(s = S) |> 
+  summarize(
+    .groups = "drop",
+    `E[Y|X=1,S=s]` = mean(Y[X==1]),
+    `E[Y|X=0,S=s]` = mean(Y[X==0]),
+    `E[Y(1) - Y(0)|S=s]` = `E[Y|X=1,S=s]` - `E[Y|X=0,S=s]`,
+    `p(S=s)` = n()/nrow(data1))
+
+PS_strata |> pander()
+s
+E[Y|X=1,S=s]
+E[Y|X=0,S=s]
+E[Y(1) - Y(0)|S=s]
+p(S=s)
+0.3001
+0.2001
+0.09985
+0.1002
+0.4996
+0.7002
+0.5002
+0.302
+0.1982
+0.5004
+
+Here we can see that the conditional means E[Y|X=x,PS=s] are approximately equal to the conditional potential outcomes, EYx|Z=z.
+Analogously to when we stratified on Z, we can average the stratum-specific effect estimates, weighting by the distribution of the propensity score strata, to estimate the marginal average treatment effect E[Y(1) - Y(0)]:
+
+`E[Y(1) - Y(0)]` = 
+  PS_strata |> 
+  summarize(`E[Y(1) - Y(0)]` = sum(`E[Y(1) - Y(0)|S=s]` * `p(S=s)`)) |> 
+  pander()
+The result is again very close to the underlying “true” ATE derived by our data-generating model, EY1-Y0=0.15.
+Propensity scores can also be used in other ways, such as matching or weighting; these options will be discussed in the third session of this series.
